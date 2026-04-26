@@ -1,6 +1,8 @@
-# Agente personal (MVP)
+# Agente personal contable (MVP)
 
 Monorepo con **Next.js**, **Supabase**, **LangGraph** y **OpenRouter**. Incluye chat web, onboarding, ajustes y bot de **Telegram** (opcional).
+
+El agente soporta un flujo inicial de **contabilidad asistida**: puede conectarse a **Google Drive** para listar y leer archivos, extraer campos de facturas (por ejemplo **NIT**, razón social, número, fecha y total) y registrar filas en **Google Sheets** con confirmación humana cuando la acción implica escritura. Esto lo hace por medio de **Google Cloud Console**
 
 ## Requisitos previos
 
