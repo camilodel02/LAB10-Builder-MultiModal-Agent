@@ -182,6 +182,115 @@ export const TOOL_CATALOG: ToolDefinition[] = [
       "Crea una tarea programada que el agente ejecutará automáticamente y notificará por Telegram.",
   },
   {
+    id: "google_drive_list_files",
+    name: "google_drive_list_files",
+    description:
+      "Lists files from the authenticated user's Google Drive. You can filter by folderId and mimeType, and limit result size.",
+    risk: "low",
+    requires_integration: "google",
+    parameters_schema: {
+      type: "object",
+      properties: {
+        folderId: {
+          type: "string",
+          description:
+            "Optional folder ID to scope the search. If omitted, searches across My Drive.",
+        },
+        mimeType: {
+          type: "string",
+          description:
+            "Optional MIME type filter (e.g. application/pdf, image/png).",
+        },
+        query: {
+          type: "string",
+          description:
+            "Optional text to match against file name (contains operator).",
+        },
+        pageSize: {
+          type: "number",
+          description: "Max number of files to return (1-50). Default 10.",
+        },
+      },
+      required: [],
+    },
+    displayName: "Google Drive: listar archivos",
+    displayDescription:
+      "Lista archivos de tu Drive (opcionalmente por carpeta y tipo).",
+  },
+  {
+    id: "google_drive_get_file",
+    name: "google_drive_get_file",
+    description:
+      "Gets metadata and textual content (when available) for a Google Drive file by id.",
+    risk: "low",
+    requires_integration: "google",
+    parameters_schema: {
+      type: "object",
+      properties: {
+        fileId: {
+          type: "string",
+          description: "Drive file ID to fetch.",
+        },
+      },
+      required: ["fileId"],
+    },
+    displayName: "Google Drive: obtener archivo",
+    displayDescription:
+      "Obtiene metadatos y contenido textual (si está disponible) de un archivo.",
+  },
+  {
+    id: "google_sheets_append_row",
+    name: "google_sheets_append_row",
+    description:
+      "Appends one row into a Google Sheet tab using USER_ENTERED mode. Requires confirmation.",
+    risk: "medium",
+    requires_integration: "google",
+    parameters_schema: {
+      type: "object",
+      properties: {
+        spreadsheetId: {
+          type: "string",
+          description: "Target spreadsheet ID.",
+        },
+        sheetName: {
+          type: "string",
+          description: "Target tab name inside the spreadsheet.",
+        },
+        values: {
+          type: "array",
+          description: "Flat array representing one row values.",
+          items: {
+            oneOf: [{ type: "string" }, { type: "number" }, { type: "boolean" }],
+          },
+        },
+      },
+      required: ["spreadsheetId", "sheetName", "values"],
+    },
+    displayName: "Google Sheets: agregar fila",
+    displayDescription:
+      "Agrega una fila en una hoja de calculo (requiere confirmación).",
+  },
+  {
+    id: "invoice_extract_fields",
+    name: "invoice_extract_fields",
+    description:
+      "Extracts structured accounting fields from invoice text (NIT, reason, totals, invoice number, date).",
+    risk: "low",
+    parameters_schema: {
+      type: "object",
+      properties: {
+        text: {
+          type: "string",
+          description: "Raw invoice text to parse.",
+        },
+      },
+      required: ["text"],
+    },
+    displayName: "Extraer campos de factura",
+    displayDescription:
+      "Extrae campos contables estructurados desde texto de factura.",
+  },
+  {
     id: "bash",
     name: "bash",
     description:

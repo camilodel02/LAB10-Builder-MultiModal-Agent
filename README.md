@@ -169,3 +169,29 @@ Después de vincular, los mensajes al bot usan el mismo pipeline que el chat web
 - **Telegram no responde**: webhook debe ser HTTPS; token y secreto correctos; visita de nuevo `/api/telegram/setup` si cambias la URL pública.
 
 Si quieres, el siguiente paso natural es desplegar **Vercel** (o similar) para `apps/web`, definir las mismas variables de entorno en el panel del proveedor y usar la URL de producción en Supabase y en el webhook de Telegram.
+
+---
+
+## Reiniciar pipeline local
+
+Cuando apagues tu PC/sesión y quieras volver a correr todo:
+
+```bash
+# 1) Desde la raíz del repo
+npm run dev
+
+# 2) En otra terminal (para Telegram webhook en local)
+ngrok http 3000
+```
+
+Pasos rápidos después de levantar:
+
+1. Copia la nueva URL HTTPS de ngrok.
+2. Actualiza `TELEGRAM_WEBHOOK_BASE_URL` en `apps/web/.env.local`.
+3. Reinicia `npm run dev` si cambiaste variables.
+4. Re-registra webhook abriendo: `https://TU_URL_NGROK/api/telegram/setup`
+
+Notas:
+
+- No necesitas volver a correr migraciones SQL cada vez.
+- Si no usarás Telegram, basta con `npm run dev`.

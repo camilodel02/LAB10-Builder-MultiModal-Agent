@@ -65,6 +65,29 @@ async function resolveGitHubToken(
   }
 }
 
+async function resolveGoogleAccessToken(
+  db: ReturnType<typeof createServerClient>,
+  userId: string
+): Promise<string | undefined> {
+  const { data: integration } = await db
+    .from("user_integrations")
+    .select("encrypted_tokens")
+    .eq("user_id", userId)
+    .eq("provider", "google")
+    .eq("status", "active")
+    .single();
+
+  if (!integration?.encrypted_tokens) return undefined;
+  try {
+    const decrypted = decrypt(integration.encrypted_tokens);
+    const parsed = JSON.parse(decrypted) as { access_token?: string };
+    return parsed.access_token;
+  } catch (err) {
+    console.error("Failed to decrypt Google token:", err);
+    return undefined;
+  }
+}
+
 async function buildAgentContext(
   db: ReturnType<typeof createServerClient>,
   userId: string,
@@ -88,6 +111,7 @@ async function buildAgentContext(
     .eq("status", "active");
 
   const githubToken = await resolveGitHubToken(db, userId);
+  const googleAccessToken = await resolveGoogleAccessToken(db, userId);
 
   return {
     userId,
@@ -110,6 +134,7 @@ async function buildAgentContext(
       created_at: i.created_at as string,
     })),
     githubToken,
+    googleAccessToken,
   };
 }
 

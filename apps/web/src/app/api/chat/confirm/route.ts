@@ -3,6 +3,19 @@ import { createClient } from "@/lib/supabase/server";
 import { createServerClient, getPendingToolCall, decrypt } from "@agents/db";
 import { runAgent } from "@agents/agent";
 
+function extractGoogleAccessToken(
+  encryptedTokens: string | undefined
+): string | undefined {
+  if (!encryptedTokens) return undefined;
+  try {
+    const decrypted = decrypt(encryptedTokens);
+    const parsed = JSON.parse(decrypted) as { access_token?: string };
+    return parsed.access_token;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -69,6 +82,13 @@ export async function POST(request: Request) {
       }
     }
 
+    const googleIntegration = (integrations ?? []).find(
+      (i: Record<string, unknown>) => i.provider === "google"
+    );
+    const googleAccessToken = extractGoogleAccessToken(
+      googleIntegration?.encrypted_tokens as string | undefined
+    );
+
     // Resume the interrupted LangGraph with the human decision
     const result = await runAgent({
       resumeDecision: action as "approve" | "reject",
@@ -92,6 +112,7 @@ export async function POST(request: Request) {
         created_at: i.created_at as string,
       })),
       githubToken,
+      googleAccessToken,
     });
 
     return NextResponse.json({

@@ -126,3 +126,23 @@ export interface ScheduledTaskRun {
   notified: boolean;
   notification_error?: string;
 }
+
+export type InvoiceIngestionStatus =
+  | "pending_review"
+  | "approved"
+  | "written"
+  | "failed";
+
+export interface InvoiceIngestion {
+  id: string;
+  user_id: string;
+  source_provider: string;
+  source_file_id: string;
+  file_name: string;
+  raw_text?: string | null;
+  extracted_json: Record<string, unknown>;
+  status: InvoiceIngestionStatus;
+  error_message?: string | null;
+  created_at: string;
+  updated_at: string;
+}

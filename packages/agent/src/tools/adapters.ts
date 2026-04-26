@@ -7,6 +7,7 @@ import { TOOL_SCHEMAS } from "./schemas";
 import { withTracking } from "./withTracking";
 import { executeBash } from "./bashExec";
 import { executeReadFile, executeWriteFile, executeEditFile } from "./fileTools";
+import { PDFParse } from "pdf-parse";
 
 const GITHUB_API = "https://api.github.com";
 const GITHUB_UA = "10x-builders-agent/1.0";
@@ -18,6 +19,7 @@ export interface ToolContext {
   enabledTools: UserToolSetting[];
   integrations: UserIntegration[];
   githubToken?: string;
+  googleAccessToken?: string;
 }
 
 function isToolAvailable(toolId: string, ctx: ToolContext): boolean {
@@ -129,6 +131,305 @@ export async function executeGitHubTool(
   }
 }
 
+async function googleDriveListFiles(
+  input: {
+    folderId?: string;
+    mimeType?: string;
+    query?: string;
+    pageSize?: number;
+  },
+  accessToken: string
+): Promise<Record<string, unknown>> {
+  const conditions: string[] = ["trashed = false"];
+
+  if (input.folderId) {
+    conditions.push(`'${input.folderId.replace(/'/g, "\\'")}' in parents`);
+  }
+  if (input.mimeType) {
+    conditions.push(`mimeType = '${input.mimeType.replace(/'/g, "\\'")}'`);
+  }
+  if (input.query) {
+    conditions.push(`name contains '${input.query.replace(/'/g, "\\'")}'`);
+  }
+
+  const params = new URLSearchParams({
+    pageSize: String(input.pageSize ?? 10),
+    q: conditions.join(" and "),
+    fields: "files(id,name,mimeType,createdTime,modifiedTime,webViewLink,size),nextPageToken",
+    orderBy: "modifiedTime desc",
+    supportsAllDrives: "true",
+    includeItemsFromAllDrives: "true",
+  });
+
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files?${params.toString()}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Google Drive API ${res.status}: ${body}`);
+  }
+
+  const data = (await res.json()) as {
+    files?: Array<Record<string, unknown>>;
+    nextPageToken?: string;
+  };
+
+  return {
+    files: (data.files ?? []).map((f) => ({
+      id: f.id,
+      name: f.name,
+      mimeType: f.mimeType,
+      size: f.size ?? null,
+      createdTime: f.createdTime,
+      modifiedTime: f.modifiedTime,
+      webViewLink: f.webViewLink,
+    })),
+    nextPageToken: data.nextPageToken ?? null,
+    count: (data.files ?? []).length,
+  };
+}
+
+async function googleDriveGetFile(
+  input: { fileId: string },
+  accessToken: string
+): Promise<Record<string, unknown>> {
+  const metadataRes = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?fields=id,name,mimeType,size,createdTime,modifiedTime,webViewLink`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    }
+  );
+
+  if (!metadataRes.ok) {
+    const body = await metadataRes.text().catch(() => "");
+    throw new Error(`Google Drive metadata ${metadataRes.status}: ${body}`);
+  }
+
+  const meta = (await metadataRes.json()) as Record<string, unknown>;
+  const mimeType = String(meta.mimeType ?? "");
+
+  // For docs files, export as plain text. For plain text-like files, download directly.
+  let textContent: string | null = null;
+  let contentSource: string | null = null;
+
+  if (mimeType.startsWith("application/vnd.google-apps.")) {
+    const exportRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}/export?mimeType=text/plain`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (exportRes.ok) {
+      textContent = await exportRes.text();
+      contentSource = "google_export_text_plain";
+    }
+  } else if (
+    mimeType.startsWith("text/") ||
+    mimeType === "application/json" ||
+    mimeType === "application/xml"
+  ) {
+    const mediaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (mediaRes.ok) {
+      textContent = await mediaRes.text();
+      contentSource = "drive_alt_media";
+    }
+  } else if (mimeType === "application/pdf") {
+    const mediaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (mediaRes.ok) {
+      const bytes = await mediaRes.arrayBuffer();
+      const parser = new PDFParse({ data: Buffer.from(bytes) });
+      try {
+        const parsed = await parser.getText();
+        textContent = parsed.text?.trim() || null;
+        contentSource = "pdf_parse";
+      } finally {
+        await parser.destroy();
+      }
+    }
+  } else if (mimeType.startsWith("image/")) {
+    const mediaRes = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(input.fileId)}?alt=media`,
+      {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      }
+    );
+    if (mediaRes.ok) {
+      const apiKey = process.env.GOOGLE_VISION_API_KEY;
+      if (!apiKey) {
+        return {
+          file: meta,
+          textContent: null,
+          contentSource: null,
+          textLength: 0,
+          note:
+            "Image detected. Set GOOGLE_VISION_API_KEY to enable OCR for image invoices.",
+        };
+      }
+      const bytes = Buffer.from(await mediaRes.arrayBuffer());
+      const visionRes = await fetch(
+        `https://vision.googleapis.com/v1/images:annotate?key=${encodeURIComponent(apiKey)}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            requests: [
+              {
+                image: { content: bytes.toString("base64") },
+                features: [{ type: "DOCUMENT_TEXT_DETECTION" }],
+              },
+            ],
+          }),
+        }
+      );
+      if (visionRes.ok) {
+        const visionData = (await visionRes.json()) as {
+          responses?: Array<{ fullTextAnnotation?: { text?: string } }>;
+        };
+        textContent =
+          visionData.responses?.[0]?.fullTextAnnotation?.text?.trim() ?? null;
+        contentSource = "google_vision_document_text_detection";
+      }
+    }
+  }
+
+  return {
+    file: meta,
+    textContent,
+    contentSource,
+    textLength: textContent ? textContent.length : 0,
+    note:
+      textContent === null
+        ? "No text content extracted for this file type yet (e.g. PDF/image binary)."
+        : null,
+  };
+}
+
+function firstMatch(text: string, regex: RegExp): string | null {
+  const match = text.match(regex);
+  return match?.[1]?.trim() ?? null;
+}
+
+function toNumberSafe(raw: string | null): number | null {
+  if (!raw) return null;
+  const normalized = raw.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
+  const value = Number(normalized);
+  return Number.isFinite(value) ? value : null;
+}
+
+async function invoiceExtractFields(input: { text: string }): Promise<Record<string, unknown>> {
+  const text = input.text;
+
+  const nit = firstMatch(
+    text,
+    /(?:NIT|Nit|nit)\s*[:\-]?\s*([0-9][0-9.\-]{5,})/
+  );
+  const invoiceNumber = firstMatch(
+    text,
+    /(?:Factura|FACTURA|N[úu]mero de factura|No\.?\s*Factura)\s*[:#\-]?\s*([A-Z0-9\-]+)/i
+  );
+  const date = firstMatch(
+    text,
+    /(?:Fecha|FECHA)\s*[:\-]?\s*([0-3]?\d[\/\-][0-1]?\d[\/\-](?:\d{2}|\d{4}))/i
+  );
+  const razonSocial =
+    firstMatch(text, /(?:Raz[oó]n social|RAZ[OÓ]N SOCIAL)\s*[:\-]?\s*(.+)/i) ??
+    firstMatch(text, /(?:Proveedor|Emisor)\s*[:\-]?\s*(.+)/i);
+
+  const subtotal = toNumberSafe(
+    firstMatch(text, /(?:Subtotal|SUBTOTAL)\s*[:\-]?\s*\$?\s*([\d.,]+)/i)
+  );
+  const iva = toNumberSafe(
+    firstMatch(text, /(?:IVA|I\.V\.A\.)\s*[:\-]?\s*\$?\s*([\d.,]+)/i)
+  );
+  const total = toNumberSafe(
+    firstMatch(text, /(?:Total(?:\s+a\s+pagar)?|TOTAL)\s*[:\-]?\s*\$?\s*([\d.,]+)/i)
+  );
+
+  const confidenceFields = [nit, razonSocial, invoiceNumber, date, total].filter(Boolean).length;
+  const confidence = Math.min(1, confidenceFields / 5);
+
+  return {
+    nit_emisor: nit,
+    razon_social_emisor: razonSocial,
+    numero_factura: invoiceNumber,
+    fecha_emision: date,
+    subtotal,
+    iva,
+    total,
+    confidence,
+  };
+}
+
+async function googleSheetsAppendRow(
+  input: {
+    spreadsheetId: string;
+    sheetName: string;
+    values: Array<string | number | boolean>;
+  },
+  accessToken: string
+): Promise<Record<string, unknown>> {
+  const range = encodeURIComponent(`${input.sheetName}!A1`);
+  const params = new URLSearchParams({
+    valueInputOption: "USER_ENTERED",
+    insertDataOption: "INSERT_ROWS",
+    includeValuesInResponse: "true",
+  });
+
+  const res = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(input.spreadsheetId)}/values/${range}:append?${params.toString()}`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        values: [input.values],
+      }),
+    }
+  );
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Google Sheets API ${res.status}: ${body}`);
+  }
+
+  const data = (await res.json()) as {
+    updates?: {
+      spreadsheetId?: string;
+      updatedRange?: string;
+      updatedRows?: number;
+      updatedColumns?: number;
+      updatedCells?: number;
+    };
+  };
+
+  return {
+    ok: true,
+    spreadsheetId: data.updates?.spreadsheetId ?? input.spreadsheetId,
+    updatedRange: data.updates?.updatedRange ?? null,
+    updatedRows: data.updates?.updatedRows ?? 0,
+    updatedColumns: data.updates?.updatedColumns ?? 0,
+    updatedCells: data.updates?.updatedCells ?? 0,
+  };
+}
+
 type ToolHandlers = {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [K in string]: (input: any, ctx: ToolContext) => Promise<Record<string, unknown>>;
@@ -162,6 +463,39 @@ export const TOOL_HANDLERS: ToolHandlers = {
 
   github_create_repo: async (input, ctx) =>
     executeGitHubTool("github_create_repo", input, ctx.githubToken!),
+
+  google_drive_list_files: async (
+    input: { folderId?: string; mimeType?: string; query?: string; pageSize?: number },
+    ctx
+  ) => {
+    if (!ctx.googleAccessToken) {
+      throw new Error("Google integration token not available");
+    }
+    return googleDriveListFiles(input, ctx.googleAccessToken);
+  },
+  google_drive_get_file: async (input: { fileId: string }, ctx) => {
+    if (!ctx.googleAccessToken) {
+      throw new Error("Google integration token not available");
+    }
+    return googleDriveGetFile(input, ctx.googleAccessToken);
+  },
+
+  google_sheets_append_row: async (
+    input: {
+      spreadsheetId: string;
+      sheetName: string;
+      values: Array<string | number | boolean>;
+    },
+    ctx
+  ) => {
+    if (!ctx.googleAccessToken) {
+      throw new Error("Google integration token not available");
+    }
+    return googleSheetsAppendRow(input, ctx.googleAccessToken);
+  },
+
+  invoice_extract_fields: async (input: { text: string }) =>
+    invoiceExtractFields(input),
 
   read_file: async (input: { path: string; offset?: number; limit?: number }) => {
     const result = await executeReadFile(input);

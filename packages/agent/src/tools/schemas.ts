@@ -22,6 +22,23 @@ export const TOOL_SCHEMAS = {
     description: z.string().optional().default(""),
     isPrivate: z.boolean().optional().default(false),
   }),
+  google_drive_list_files: z.object({
+    folderId: z.string().optional(),
+    mimeType: z.string().optional(),
+    query: z.string().optional(),
+    pageSize: z.number().int().min(1).max(50).optional().default(10),
+  }),
+  google_drive_get_file: z.object({
+    fileId: z.string(),
+  }),
+  google_sheets_append_row: z.object({
+    spreadsheetId: z.string(),
+    sheetName: z.string(),
+    values: z.array(z.union([z.string(), z.number(), z.boolean()])),
+  }),
+  invoice_extract_fields: z.object({
+    text: z.string().min(1),
+  }),
   read_file: z.object({
     path: z.string().describe("Absolute path or path relative to the server process working directory."),
     offset: z.number().int().min(1).optional().describe("1-based line number to start reading from. Defaults to 1."),

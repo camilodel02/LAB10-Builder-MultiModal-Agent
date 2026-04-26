@@ -3,6 +3,24 @@ import { createClient } from "@/lib/supabase/server";
 import { createServerClient, decrypt, touchSession } from "@agents/db";
 import { runAgent } from "@agents/agent";
 
+function extractGoogleAccessToken(
+  encryptedTokens: string | undefined
+): string | undefined {
+  if (!encryptedTokens) return undefined;
+  try {
+    const decrypted = decrypt(encryptedTokens);
+    try {
+      const parsed = JSON.parse(decrypted) as { access_token?: string };
+      return parsed.access_token;
+    } catch {
+      return undefined;
+    }
+  } catch (err) {
+    console.error("Failed to decrypt Google token:", err);
+    return undefined;
+  }
+}
+
 export async function POST(request: Request) {
   try {
     const supabase = await createClient();
@@ -46,6 +64,13 @@ export async function POST(request: Request) {
         console.error("Failed to decrypt GitHub token:", err);
       }
     }
+
+    const googleIntegration = (integrations ?? []).find(
+      (i: Record<string, unknown>) => i.provider === "google"
+    );
+    const googleAccessToken = extractGoogleAccessToken(
+      googleIntegration?.encrypted_tokens as string | undefined
+    );
 
     let session;
     if (requestedSessionId) {
@@ -116,6 +141,7 @@ export async function POST(request: Request) {
         created_at: i.created_at as string,
       })),
       githubToken,
+      googleAccessToken,
     });
 
     return NextResponse.json({

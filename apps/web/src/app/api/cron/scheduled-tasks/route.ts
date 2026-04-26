@@ -60,6 +60,20 @@ async function buildAgentContextForTask(
     }
   }
 
+  let googleAccessToken: string | undefined;
+  const googleIntegration = (integrations ?? []).find(
+    (i: Record<string, unknown>) => i.provider === "google"
+  );
+  if (googleIntegration?.encrypted_tokens) {
+    try {
+      const decrypted = decrypt(googleIntegration.encrypted_tokens as string);
+      const parsed = JSON.parse(decrypted) as { access_token?: string };
+      googleAccessToken = parsed.access_token;
+    } catch {
+      googleAccessToken = undefined;
+    }
+  }
+
   return {
     userId,
     sessionId,
@@ -83,6 +97,7 @@ async function buildAgentContextForTask(
       created_at: i.created_at as string,
     })) as UserIntegration[],
     githubToken,
+    googleAccessToken,
   };
 }
 

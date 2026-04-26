@@ -50,6 +50,7 @@ export interface AgentInput {
   enabledTools: UserToolSetting[];
   integrations: UserIntegration[];
   githubToken?: string;
+  googleAccessToken?: string;
   /** Skip HITL interrupts and auto-approve all tool calls. Use only for unattended runs (e.g. cron). */
   bypassConfirmation?: boolean;
 }
@@ -98,6 +99,13 @@ function buildConfirmationMessage(
           : `con expresión cron "${args.cron_expr}"`;
       return `Se requiere confirmación para programar una tarea (${schedType}) ${when}.\n\nPrompt: "${args.prompt}"`;
     }
+    case "google_sheets_append_row": {
+      const sheetName = String(args.sheetName ?? "");
+      const spreadsheetId = String(args.spreadsheetId ?? "");
+      const values = Array.isArray(args.values) ? args.values : [];
+      const preview = JSON.stringify(values).slice(0, 300);
+      return `Se requiere confirmación para agregar una fila en Google Sheets (${sheetName}) del spreadsheet ${spreadsheetId}.\n\nValores:\n\`\`\`\n${preview}\n\`\`\``;
+    }
     default:
       return `Se requiere confirmación para ejecutar "${toolId}" (riesgo: ${getToolRisk(toolId)}).`;
   }
@@ -116,11 +124,20 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     enabledTools,
     integrations,
     githubToken,
+    googleAccessToken,
     bypassConfirmation = false,
   } = input;
 
   const model = createChatModel();
-  const toolCtx: ToolContext = { db, userId, sessionId, enabledTools, integrations, githubToken };
+  const toolCtx: ToolContext = {
+    db,
+    userId,
+    sessionId,
+    enabledTools,
+    integrations,
+    githubToken,
+    googleAccessToken,
+  };
   const lcTools = buildLangChainTools(toolCtx);
 
   const modelWithTools = lcTools.length > 0 ? model.bindTools(lcTools) : model;

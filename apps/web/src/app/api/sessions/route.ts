@@ -47,8 +47,19 @@ export async function POST() {
     .single();
 
   if (error || !session) {
+    console.error("POST /api/sessions failed", {
+      userId: user.id,
+      error,
+      hasSession: Boolean(session),
+    });
     return NextResponse.json(
-      { error: "Failed to create session" },
+      {
+        error: "Failed to create session",
+        details:
+          process.env.NODE_ENV === "development"
+            ? (error?.message ?? "unknown_error")
+            : undefined,
+      },
       { status: 500 }
     );
   }
