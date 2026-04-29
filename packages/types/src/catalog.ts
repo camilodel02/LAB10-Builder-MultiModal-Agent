@@ -286,9 +286,9 @@ export const TOOL_CATALOG: ToolDefinition[] = [
       },
       required: ["text"],
     },
-    displayName: "Extraer campos de factura",
+    displayName: "Extracción de información contable",
     displayDescription:
-      "Extrae campos contables estructurados desde texto de factura.",
+      "Extrae información contable estructurada desde texto de facturas.",
   },
   {
     id: "bash",

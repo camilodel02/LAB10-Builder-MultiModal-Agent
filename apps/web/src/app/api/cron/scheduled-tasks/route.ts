@@ -4,13 +4,25 @@ import {
   createServerClient,
   decrypt,
   claimDueTasks,
+  claimPendingMemoryJobs,
   createTaskRun,
   completeTaskRun,
   failTaskRun,
+  getSessionMessages,
+  upsertUserMemory,
+  completeMemoryExtractionJob,
+  failMemoryExtractionJob,
 } from "@agents/db";
 import { runAgent } from "@agents/agent";
 import { notifyUserViaTelegram } from "@/lib/telegram/send";
-import type { ScheduledTask, UserToolSetting, UserIntegration } from "@agents/types";
+import type {
+  MemoryExtractionJob,
+  ScheduledTask,
+  UserToolSetting,
+  UserIntegration,
+} from "@agents/types";
+import { extractStableMemories, generateEmbedding } from "@/lib/memory/openrouter";
+import { retrieveRelevantMemories } from "@/lib/memory/retrieval";
 
 const CRON_SECRET = process.env.CRON_SECRET ?? "";
 
@@ -163,23 +175,89 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Failed to fetch tasks" }, { status: 500 });
   }
 
-  if (tasks.length === 0) {
-    return NextResponse.json({ processed: 0 });
+  let memoryJobs: MemoryExtractionJob[] = [];
+  try {
+    memoryJobs = await claimPendingMemoryJobs(db, 10);
+  } catch (err) {
+    console.error("[cron] Failed to claim memory jobs:", err);
   }
 
-  const results = await Promise.allSettled(
+  if (tasks.length === 0 && memoryJobs.length === 0) {
+    return NextResponse.json({ processed: 0, memory_jobs_processed: 0 });
+  }
+
+  const taskResults = await Promise.allSettled(
     tasks.map((task) => executeTask(db, task))
   );
+  const memoryResults = await Promise.allSettled(
+    memoryJobs.map((job) => executeMemoryJob(db, job))
+  );
 
-  const summary = results.map((r, i) => ({
+  const summary = taskResults.map((r, i) => ({
     task_id: tasks[i].id,
+    status: r.status === "fulfilled" ? "ok" : "error",
+    ...(r.status === "rejected" ? { error: String(r.reason) } : {}),
+  }));
+  const memorySummary = memoryResults.map((r, i) => ({
+    job_id: memoryJobs[i].id,
+    session_id: memoryJobs[i].session_id,
     status: r.status === "fulfilled" ? "ok" : "error",
     ...(r.status === "rejected" ? { error: String(r.reason) } : {}),
   }));
 
   console.log("[cron] Processed tasks:", JSON.stringify(summary));
+  console.log("[cron] Processed memory jobs:", JSON.stringify(memorySummary));
 
-  return NextResponse.json({ processed: tasks.length, results: summary });
+  return NextResponse.json({
+    processed: tasks.length,
+    results: summary,
+    memory_jobs_processed: memoryJobs.length,
+    memory_results: memorySummary,
+  });
+}
+
+async function executeMemoryJob(
+  db: ReturnType<typeof createServerClient>,
+  job: MemoryExtractionJob
+): Promise<void> {
+  try {
+    const maxItems = Number(process.env.MEMORY_EXTRACTION_MAX_ITEMS ?? 12);
+    const rawMessages = await getSessionMessages(db, job.session_id, 200);
+    if (rawMessages.length === 0) {
+      await completeMemoryExtractionJob(db, job.id);
+      return;
+    }
+
+    const serializedSession = rawMessages
+      .map((m) => `[${m.role}] ${m.content}`)
+      .join("\n");
+    const extracted = await extractStableMemories({
+      serializedSession,
+      maxItems,
+    });
+
+    if (extracted.length === 0) {
+      await completeMemoryExtractionJob(db, job.id);
+      return;
+    }
+
+    for (const memory of extracted) {
+      const embedding = await generateEmbedding(memory.content);
+      await upsertUserMemory(db, {
+        userId: job.user_id,
+        sessionId: job.session_id,
+        memoryType: memory.memory_type,
+        content: memory.content,
+        embedding,
+      });
+    }
+
+    await completeMemoryExtractionJob(db, job.id);
+  } catch (err) {
+    const errorMessage = String(err);
+    await failMemoryExtractionJob(db, job.id, errorMessage);
+    throw err;
+  }
 }
 
 async function executeTask(
@@ -192,8 +270,19 @@ async function executeTask(
   try {
     sessionId = await getOrCreateCronSession(db, task.user_id, task.id);
     const ctx = await buildAgentContextForTask(db, task.user_id, sessionId);
+    let longTermMemories: string[] = [];
+    try {
+      longTermMemories = await retrieveRelevantMemories(task.user_id, task.prompt);
+    } catch (err) {
+      console.error("[cron] Failed memory retrieval:", err);
+    }
 
-    const result = await runAgent({ ...ctx, message: task.prompt, bypassConfirmation: true });
+    const result = await runAgent({
+      ...ctx,
+      message: task.prompt,
+      bypassConfirmation: true,
+      longTermMemories,
+    });
 
     const nextRunAt = computeNextRunAt(task);
     const newStatus = task.schedule_type === "one_time" ? "completed" : "active";

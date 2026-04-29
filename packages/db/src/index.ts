@@ -9,3 +9,4 @@ export * from "./queries/telegram";
 export * from "./queries/tool-calls";
 export * from "./queries/scheduled-tasks";
 export * from "./queries/invoices";
+export * from "./queries/memories";

@@ -29,11 +29,27 @@ import {
   findExistingPendingToolCall,
 } from "@agents/db";
 import { getCheckpointer } from "./checkpointer";
+import { microCompactMessages } from "./memory/microCompact";
+import { shouldRunLlmCompaction } from "./memory/budget";
+import { summarizeHistory } from "./memory/summarizeHistory";
+import type { CompactionStats } from "./memory/types";
 
 const GraphState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
     reducer: (prev, next) => [...prev, ...next],
     default: () => [],
+  }),
+  runningSummary: Annotation<string>({
+    reducer: (_prev, next) => next,
+    default: () => "",
+  }),
+  compactionStats: Annotation<CompactionStats>({
+    reducer: (_prev, next) => next,
+    default: () => ({
+      summarizedUntil: 0,
+      microCompactions: 0,
+      llmCompactions: 0,
+    }),
   }),
   sessionId: Annotation<string>(),
   userId: Annotation<string>(),
@@ -51,6 +67,7 @@ export interface AgentInput {
   integrations: UserIntegration[];
   githubToken?: string;
   googleAccessToken?: string;
+  longTermMemories?: string[];
   /** Skip HITL interrupts and auto-approve all tool calls. Use only for unattended runs (e.g. cron). */
   bypassConfirmation?: boolean;
 }
@@ -112,6 +129,8 @@ function buildConfirmationMessage(
 }
 
 const MAX_TOOL_ITERATIONS = 6;
+const HARD_THRESHOLD_CHARS = 20_000;
+const RECENT_WINDOW = 16;
 
 export async function runAgent(input: AgentInput): Promise<AgentOutput> {
   const {
@@ -125,6 +144,7 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     integrations,
     githubToken,
     googleAccessToken,
+    longTermMemories = [],
     bypassConfirmation = false,
   } = input;
 
@@ -147,6 +167,39 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
   async function agentNode(
     state: typeof GraphState.State
   ): Promise<Partial<typeof GraphState.State>> {
+    const micro = microCompactMessages(state.messages);
+    const nextStats: CompactionStats = {
+      ...state.compactionStats,
+      microCompactions:
+        state.compactionStats.microCompactions + (micro.compacted ? 1 : 0),
+    };
+
+    let runningSummary = state.runningSummary ?? "";
+    let summarizedUntil = state.compactionStats.summarizedUntil ?? 0;
+    const canSummarizeChunk = micro.messages.length - RECENT_WINDOW;
+
+    if (
+      canSummarizeChunk > summarizedUntil &&
+      shouldRunLlmCompaction(micro.messages, HARD_THRESHOLD_CHARS)
+    ) {
+      const historyChunk = micro.messages.slice(summarizedUntil, canSummarizeChunk);
+      const summarized = await summarizeHistory({
+        model,
+        currentSummary: runningSummary,
+        historyChunk,
+        stats: nextStats,
+      });
+      runningSummary = summarized.summary;
+      summarizedUntil = canSummarizeChunk;
+      Object.assign(nextStats, summarized.stats, { summarizedUntil });
+    } else {
+      nextStats.summarizedUntil = summarizedUntil;
+    }
+
+    const recentMessages = micro.messages.slice(
+      Math.max(summarizedUntil, micro.messages.length - RECENT_WINDOW)
+    );
+
     const currentDate = new Date().toLocaleString("es", {
       timeZone: "America/Bogota",
       weekday: "long",
@@ -156,14 +209,25 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
       hour: "2-digit",
       minute: "2-digit",
     });
-    const systemPromptWithDate = `${state.systemPrompt}\n\nFecha y hora actual: ${currentDate} (hora Colombia).`;
+    const summarySection = runningSummary
+      ? `\n\nResumen acumulado de la conversación:\n${runningSummary}`
+      : "";
+    const longTermSection =
+      longTermMemories.length > 0
+        ? `\n\nRecuerdos relevantes de largo plazo (usar solo si aplican):\n- ${longTermMemories.join("\n- ")}`
+        : "";
+    const systemPromptWithDate = `${state.systemPrompt}\n\nFecha y hora actual: ${currentDate} (hora Colombia).${summarySection}${longTermSection}`;
 
     // Inject SystemMessage fresh so it is never accumulated in state.messages.
     const response = await modelWithTools.invoke([
       new SystemMessage(systemPromptWithDate),
-      ...state.messages,
+      ...recentMessages,
     ]);
-    return { messages: [response] };
+    return {
+      messages: [response],
+      runningSummary,
+      compactionStats: nextStats,
+    };
   }
 
   async function toolExecutorNode(
@@ -316,7 +380,18 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     await addMessage(db, sessionId, "user", message!);
 
     finalState = await app.invoke(
-      { messages: [new HumanMessage(message!)], sessionId, userId, systemPrompt },
+      {
+        messages: [new HumanMessage(message!)],
+        sessionId,
+        userId,
+        systemPrompt,
+        runningSummary: "",
+        compactionStats: {
+          summarizedUntil: 0,
+          microCompactions: 0,
+          llmCompactions: 0,
+        },
+      },
       config
     );
   }

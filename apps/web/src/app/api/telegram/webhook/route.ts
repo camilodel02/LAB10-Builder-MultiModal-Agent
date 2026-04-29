@@ -6,6 +6,7 @@ import {
 } from "@agents/db";
 import { runAgent } from "@agents/agent";
 import { sendTelegramMessage } from "@/lib/telegram/send";
+import { retrieveRelevantMemories } from "@/lib/memory/retrieval";
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN ?? "";
 const WEBHOOK_SECRET = process.env.TELEGRAM_WEBHOOK_SECRET ?? "";
@@ -434,7 +435,13 @@ export async function POST(request: Request) {
 
   try {
     const ctx = await buildAgentContext(db, userId, session.id);
-    const result = await runAgent({ ...ctx, message: text });
+    let longTermMemories: string[] = [];
+    try {
+      longTermMemories = await retrieveRelevantMemories(userId, text);
+    } catch (err) {
+      console.error("Telegram memory retrieval error:", err);
+    }
+    const result = await runAgent({ ...ctx, message: text, longTermMemories });
 
     if (result.pendingConfirmation) {
       // Send the agent's conversational reply first if different from the confirmation prompt

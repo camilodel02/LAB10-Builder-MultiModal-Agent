@@ -146,3 +146,39 @@ export interface InvoiceIngestion {
   created_at: string;
   updated_at: string;
 }
+
+export type MemoryType = "episodic" | "semantic" | "procedural";
+export type MemoryExtractionJobStatus =
+  | "pending"
+  | "processing"
+  | "completed"
+  | "failed";
+
+export interface UserMemory {
+  id: string;
+  user_id: string;
+  session_id?: string | null;
+  memory_type: MemoryType;
+  content: string;
+  retrieval_count: number;
+  last_retrieved_at?: string | null;
+  archived: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UserMemoryMatch extends UserMemory {
+  similarity: number;
+}
+
+export interface MemoryExtractionJob {
+  id: string;
+  user_id: string;
+  session_id: string;
+  status: MemoryExtractionJobStatus;
+  attempts: number;
+  error_message?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  created_at: string;
+}

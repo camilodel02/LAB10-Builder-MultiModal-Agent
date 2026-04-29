@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServerClient, decrypt, touchSession } from "@agents/db";
 import { runAgent } from "@agents/agent";
+import { retrieveRelevantMemories } from "@/lib/memory/retrieval";
 
 function extractGoogleAccessToken(
   encryptedTokens: string | undefined
@@ -118,6 +119,12 @@ export async function POST(request: Request) {
     }
 
     await touchSession(db, session.id);
+    let longTermMemories: string[] = [];
+    try {
+      longTermMemories = await retrieveRelevantMemories(user.id, message);
+    } catch (err) {
+      console.error("Failed to retrieve long-term memories:", err);
+    }
 
     const result = await runAgent({
       message,
@@ -142,6 +149,7 @@ export async function POST(request: Request) {
       })),
       githubToken,
       googleAccessToken,
+      longTermMemories,
     });
 
     return NextResponse.json({
