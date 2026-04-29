@@ -104,13 +104,26 @@ export async function upsertUserMemory(
     embedding: number[];
   }
 ): Promise<UserMemory> {
+  const normalizedContent = params.content.trim();
+  const { data: existing, error: existingError } = await db
+    .from("user_memories")
+    .select("*")
+    .eq("user_id", params.userId)
+    .eq("memory_type", params.memoryType)
+    .eq("content", normalizedContent)
+    .eq("archived", false)
+    .limit(1)
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) return existing as UserMemory;
+
   const { data, error } = await db
     .from("user_memories")
     .insert({
       user_id: params.userId,
       session_id: params.sessionId ?? null,
       memory_type: params.memoryType,
-      content: params.content,
+      content: normalizedContent,
       embedding: params.embedding,
       archived: false,
     })

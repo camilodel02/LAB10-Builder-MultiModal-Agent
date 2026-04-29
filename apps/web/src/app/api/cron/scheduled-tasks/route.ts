@@ -241,7 +241,15 @@ async function executeMemoryJob(
       return;
     }
 
-    for (const memory of extracted) {
+    const seen = new Set<string>();
+    const deduped = extracted.filter((memory) => {
+      const key = `${memory.memory_type}::${memory.content.trim().toLowerCase()}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
+    for (const memory of deduped) {
       const embedding = await generateEmbedding(memory.content);
       await upsertUserMemory(db, {
         userId: job.user_id,
