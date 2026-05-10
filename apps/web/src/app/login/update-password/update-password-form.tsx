@@ -2,15 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { createBrowserClient } from "@supabase/ssr";
 
-export function LoginForm({
-  recoverySessionError = false,
-}: {
-  recoverySessionError?: boolean;
-}) {
-  const [email, setEmail] = useState("");
+export function UpdatePasswordForm() {
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -22,16 +19,24 @@ export function LoginForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setLoading(true);
     setError(null);
 
-    const { error } = await supabase.auth.signInWithPassword({
-      email,
+    if (password.length < 6) {
+      setError("La contraseña debe tener al menos 6 caracteres.");
+      return;
+    }
+    if (password !== confirm) {
+      setError("Las contraseñas no coinciden.");
+      return;
+    }
+
+    setLoading(true);
+    const { error: updateError } = await supabase.auth.updateUser({
       password,
     });
 
-    if (error) {
-      setError(error.message);
+    if (updateError) {
+      setError(updateError.message);
       setLoading(false);
       return;
     }
@@ -42,40 +47,38 @@ export function LoginForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {recoverySessionError && (
-        <div className="rounded-md bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
-          El enlace de recuperación no es válido o expiró. Solicita uno nuevo en
-          «Restablecer contraseña».
-        </div>
-      )}
       {error && (
         <div className="rounded-md bg-red-50 p-3 text-sm text-red-700 dark:bg-red-900/30 dark:text-red-400">
           {error}
         </div>
       )}
       <div>
-        <label htmlFor="email" className="block text-sm font-medium mb-1">
-          Correo electrónico
-        </label>
-        <input
-          id="email"
-          type="email"
-          required
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900"
-        />
-      </div>
-      <div>
-        <label htmlFor="password" className="block text-sm font-medium mb-1">
-          Contraseña
+        <label htmlFor="password" className="mb-1 block text-sm font-medium">
+          Nueva contraseña
         </label>
         <input
           id="password"
           type="password"
+          autoComplete="new-password"
           required
+          minLength={6}
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900"
+        />
+      </div>
+      <div>
+        <label htmlFor="confirm" className="mb-1 block text-sm font-medium">
+          Confirmar contraseña
+        </label>
+        <input
+          id="confirm"
+          type="password"
+          autoComplete="new-password"
+          required
+          minLength={6}
+          value={confirm}
+          onChange={(e) => setConfirm(e.target.value)}
           className="w-full rounded-md border border-neutral-300 bg-white px-3 py-2 text-sm shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-neutral-700 dark:bg-neutral-900"
         />
       </div>
@@ -84,8 +87,13 @@ export function LoginForm({
         disabled={loading}
         className="w-full rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
       >
-        {loading ? "Ingresando..." : "Iniciar sesión"}
+        {loading ? "Guardando..." : "Guardar contraseña"}
       </button>
+      <p className="text-center text-sm">
+        <Link href="/login" className="text-blue-600 hover:underline">
+          Volver al inicio de sesión
+        </Link>
+      </p>
     </form>
   );
 }

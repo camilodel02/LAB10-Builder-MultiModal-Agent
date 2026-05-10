@@ -46,7 +46,9 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (user && (pathname === "/login" || pathname === "/signup")) {
+  const loginExactPaths = ["/login", "/signup"];
+  const isLoginExact = loginExactPaths.includes(pathname);
+  if (user && isLoginExact) {
     const url = request.nextUrl.clone();
     url.pathname = "/";
     return NextResponse.redirect(url);

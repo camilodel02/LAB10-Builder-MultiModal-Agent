@@ -86,7 +86,7 @@ Next.js carga `.env*` desde el directorio de la app **`apps/web`**, no desde la 
    | `TELEGRAM_WEBHOOK_BASE_URL` | *(Opcional)* Origen HTTPS público del webhook, p. ej. `https://xxxx.ngrok-free.app` (sin barra final). Facilita registrar el webhook en local |
    | `TELEGRAM_WEBHOOK_SECRET` | *(Opcional)* Secreto; si lo defines, debe ser el mismo al llamar `/api/telegram/setup` (tras cambiarlo, vuelve a abrir esa URL) |
    | `DATABASE_URL` | URI Postgres directa (LangGraph); en Supabase Cloud suele ser la del **Session pooler** |
-   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | Para OAuth Google (Drive/Sheets); la URI de redirección debe coincidir con la de **Google Cloud Console** |
+   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | Para OAuth Google (Drive/Sheets); `GOOGLE_REDIRECT_URI` debe ser **idéntica** a una URI autorizada en Google Cloud (`…/api/integrations/google/callback`). En Railway usa la URL pública HTTPS del despliegue, no `localhost`. |
    | `OAUTH_ENCRYPTION_KEY` | Cadena hex de **64 caracteres** (32 bytes); cifra tokens OAuth en base de datos. Sin esto, GitHub/Google fallan al guardar o leer tokens |
 
 Referencia de nombres: [apps/web/.env.example](apps/web/.env.example).
