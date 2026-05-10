@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { randomBytes } from "node:crypto";
+import { getPublicAppOrigin } from "@/lib/public-origin";
 
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/drive.readonly",
@@ -24,10 +25,10 @@ export async function GET(request: Request) {
     );
   }
 
-  const { origin } = new URL(request.url);
+  const publicOrigin = getPublicAppOrigin(request.url);
   const redirectUri =
-    process.env.GOOGLE_REDIRECT_URI ??
-    `${origin}/api/integrations/google/callback`;
+    process.env.GOOGLE_REDIRECT_URI?.trim() ||
+    `${publicOrigin}/api/integrations/google/callback`;
 
   const state = randomBytes(16).toString("hex");
   const params = new URLSearchParams({
