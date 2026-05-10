@@ -16,8 +16,9 @@ El agente soporta un flujo inicial de **contabilidad asistida**: puede conectars
 
 ## Paso 1 — Clonar e instalar dependencias
 
+Desde la **raíz del monorepo** (esta carpeta del repo):
+
 ```bash
-cd agents
 npm install
 ```
 
@@ -68,10 +69,10 @@ Next.js carga `.env*` desde el directorio de la app **`apps/web`**, no desde la 
 1. Copia el ejemplo:
 
    ```bash
-   cp .env.example apps/web/.env.local
+   cp apps/web/.env.example apps/web/.env.local
    ```
 
-   *(Si ya tienes `.env.local` en la raíz, mueve o copia ese archivo a `apps/web/.env.local`.)*
+   *(Las variables se leen desde `apps/web`, no desde la raíz del monorepo.)*
 
 2. Edita `apps/web/.env.local` y completa:
 
@@ -81,11 +82,14 @@ Next.js carga `.env*` desde el directorio de la app **`apps/web`**, no desde la 
    | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Clave `anon` |
    | `SUPABASE_SERVICE_ROLE_KEY` | Clave `service_role` (solo servidor; la usa la API del agente y Telegram contra Postgres) |
    | `OPENROUTER_API_KEY` | Clave de OpenRouter |
-   | `TELEGRAM_BOT_TOKEN` | *(Opcional)* Token del bot |
-   | `TELEGRAM_WEBHOOK_SECRET` | *(Opcional)* Secreto que Telegram enviará en cabecera; debe coincidir con el configurado al registrar el webhook |
-   | `OAUTH_ENCRYPTION_KEY` | Reservado para cifrado de tokens OAuth en el futuro; puedes dejar un placeholder hasta integrar proveedores |
+   | `TELEGRAM_BOT_TOKEN` | *(Opcional)* Token del bot (BotFather) |
+   | `TELEGRAM_WEBHOOK_BASE_URL` | *(Opcional)* Origen HTTPS público del webhook, p. ej. `https://xxxx.ngrok-free.app` (sin barra final). Facilita registrar el webhook en local |
+   | `TELEGRAM_WEBHOOK_SECRET` | *(Opcional)* Secreto; si lo defines, debe ser el mismo al llamar `/api/telegram/setup` (tras cambiarlo, vuelve a abrir esa URL) |
+   | `DATABASE_URL` | URI Postgres directa (LangGraph); en Supabase Cloud suele ser la del **Session pooler** |
+   | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_REDIRECT_URI` | Para OAuth Google (Drive/Sheets); la URI de redirección debe coincidir con la de **Google Cloud Console** |
+   | `OAUTH_ENCRYPTION_KEY` | Cadena hex de **64 caracteres** (32 bytes); cifra tokens OAuth en base de datos. Sin esto, GitHub/Google fallan al guardar o leer tokens |
 
-Referencia de nombres: [.env.example](.env.example).
+Referencia de nombres: [apps/web/.env.example](apps/web/.env.example).
 
 ---
 
@@ -168,32 +172,34 @@ Después de vincular, los mensajes al bot usan el mismo pipeline que el chat web
 - **Redirecciones infinitas o “no auth”**: revisa `Site URL` y `Redirect URLs` en Supabase y que `.env.local` esté en **`apps/web`**.
 - **Errores al guardar perfil o mensajes**: confirma que ejecutaste la migración SQL y que RLS no bloquea por falta de sesión (debes estar logueado con el mismo usuario).
 - **Chat sin respuesta / 500 en `/api/chat`**: `OPENROUTER_API_KEY`, cuota en OpenRouter o modelo en `model.ts`.
-- **Telegram no responde**: webhook debe ser HTTPS; token y secreto correctos; visita de nuevo `/api/telegram/setup` si cambias la URL pública.
+- **Telegram no responde**: el webhook debe ser HTTPS; revisa `TELEGRAM_BOT_TOKEN` y, si usas secreto, que coincida con el registrado. **Cada vez que cambia la URL de ngrok**, actualiza `TELEGRAM_WEBHOOK_BASE_URL` y vuelve a abrir `https://TU_URL_NGROK/api/telegram/setup`.
+- **Google Drive / Sheets deja de funcionar** o en consola aparece `invalid_grant` / “Token has been expired or revoked”: el refresh token ya no vale. Ve a **Ajustes → desconectar Google y volver a conectar** (OAuth completo). Confirma `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` y que `GOOGLE_REDIRECT_URI` coincide con Google Cloud.
 
 Si quieres, el siguiente paso natural es desplegar **Vercel** (o similar) para `apps/web`, definir las mismas variables de entorno en el panel del proveedor y usar la URL de producción en Supabase y en el webhook de Telegram.
 
 ---
 
-## Reiniciar pipeline local
+## Checklist al volver a abrir el proyecto
 
-Cuando apagues tu PC/sesión y quieras volver a correr todo:
+Úsalo cuando reinicies la PC o lleves tiempo sin tocar el repo; no hace falta repetir migraciones SQL cada día.
+
+| Orden | Qué hacer |
+|-------|-----------|
+| 1 | **Raíz del repo:** `npm run dev` → app en [http://localhost:3000](http://localhost:3000). |
+| 2 | **Supabase en la nube:** nada extra. **Supabase local:** arranca antes tu stack (`npx supabase start` u orden habitual). |
+| 3 | **Telegram (opcional):** otra terminal → `ngrok http 3000`. Copia la URL `https://…`, ponla en `apps/web/.env.local` como `TELEGRAM_WEBHOOK_BASE_URL` (sin `/` al final). Si editaste `.env.local`, **reinicia** `npm run dev`. Abre `https://TU_URL_NGROK/api/telegram/setup` una vez. Si es otro usuario o borraste datos, en el bot: `/link CODIGO` (código desde **Ajustes** en la web). |
+| 4 | **Google:** con `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` el servidor puede **renovar** el access token. Si ves error de token revocado o Drive no responde: **Ajustes → reconectar Google**. |
+| 5 | **Misma cuenta web y Telegram:** el bot usa el `user_id` de quien generó el código de `/link`; conecta Google estando logueado en esa misma cuenta. |
+
+### Comandos mínimos (referencia)
 
 ```bash
-# 1) Desde la raíz del repo
+# Terminal 1 — raíz del monorepo
 npm run dev
 
-# 2) En otra terminal (para Telegram webhook en local)
+# Terminal 2 — solo si usas Telegram en local
 ngrok http 3000
 ```
 
-Pasos rápidos después de levantar:
-
-1. Copia la nueva URL HTTPS de ngrok.
-2. Actualiza `TELEGRAM_WEBHOOK_BASE_URL` en `apps/web/.env.local`.
-3. Reinicia `npm run dev` si cambiaste variables.
-4. Re-registra webhook abriendo: `https://TU_URL_NGROK/api/telegram/setup`
-
-Notas:
-
-- No necesitas volver a correr migraciones SQL cada vez.
-- Si no usarás Telegram, basta con `npm run dev`.
+- Sin Telegram, basta con el paso 1 (y Supabase si aplica).
+- No subas `apps/web/.env.local` al repositorio.

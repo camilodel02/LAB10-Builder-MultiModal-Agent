@@ -1,26 +1,13 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { createServerClient, decrypt, touchSession } from "@agents/db";
+import {
+  createServerClient,
+  decrypt,
+  touchSession,
+  resolveGoogleAccessToken,
+} from "@agents/db";
 import { runAgent } from "@agents/agent";
 import { retrieveRelevantMemories } from "@/lib/memory/retrieval";
-
-function extractGoogleAccessToken(
-  encryptedTokens: string | undefined
-): string | undefined {
-  if (!encryptedTokens) return undefined;
-  try {
-    const decrypted = decrypt(encryptedTokens);
-    try {
-      const parsed = JSON.parse(decrypted) as { access_token?: string };
-      return parsed.access_token;
-    } catch {
-      return undefined;
-    }
-  } catch (err) {
-    console.error("Failed to decrypt Google token:", err);
-    return undefined;
-  }
-}
 
 export async function POST(request: Request) {
   try {
@@ -66,12 +53,7 @@ export async function POST(request: Request) {
       }
     }
 
-    const googleIntegration = (integrations ?? []).find(
-      (i: Record<string, unknown>) => i.provider === "google"
-    );
-    const googleAccessToken = extractGoogleAccessToken(
-      googleIntegration?.encrypted_tokens as string | undefined
-    );
+    const googleAccessToken = await resolveGoogleAccessToken(db, user.id);
 
     let session;
     if (requestedSessionId) {

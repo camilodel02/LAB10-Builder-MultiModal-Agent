@@ -37,6 +37,7 @@ export async function updateSession(request: NextRequest) {
   // not via browser cookies — exempt from the Supabase session redirect.
   const isPublicApi =
     pathname.startsWith("/api/telegram/webhook") ||
+    pathname.startsWith("/api/telegram/setup") ||
     pathname.startsWith("/api/cron/");
 
   if (!user && !isPublic && !isPublicApi) {

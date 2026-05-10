@@ -33,6 +33,7 @@ import { microCompactMessages } from "./memory/microCompact";
 import { shouldRunLlmCompaction } from "./memory/budget";
 import { summarizeHistory } from "./memory/summarizeHistory";
 import type { CompactionStats } from "./memory/types";
+import { prepareMessagesForModel } from "./memory/repairToolCalls";
 
 const GraphState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -196,8 +197,10 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
       nextStats.summarizedUntil = summarizedUntil;
     }
 
-    const recentMessages = micro.messages.slice(
-      Math.max(summarizedUntil, micro.messages.length - RECENT_WINDOW)
+    const recentMessages = prepareMessagesForModel(
+      micro.messages,
+      summarizedUntil,
+      RECENT_WINDOW
     );
 
     const currentDate = new Date().toLocaleString("es", {
@@ -379,18 +382,14 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     // reconstruct from DB to avoid duplicating messages across invocations.
     await addMessage(db, sessionId, "user", message!);
 
+    // Only append the new user turn; keep runningSummary / compactionStats from
+    // checkpoint so compaction windows stay stable across turns.
     finalState = await app.invoke(
       {
         messages: [new HumanMessage(message!)],
         sessionId,
         userId,
         systemPrompt,
-        runningSummary: "",
-        compactionStats: {
-          summarizedUntil: 0,
-          microCompactions: 0,
-          llmCompactions: 0,
-        },
       },
       config
     );

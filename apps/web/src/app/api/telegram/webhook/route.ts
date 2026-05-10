@@ -3,6 +3,7 @@ import {
   createServerClient,
   decrypt,
   getPendingToolCall,
+  resolveGoogleAccessToken,
 } from "@agents/db";
 import { runAgent } from "@agents/agent";
 import { sendTelegramMessage } from "@/lib/telegram/send";
@@ -62,29 +63,6 @@ async function resolveGitHubToken(
     return decrypt(integration.encrypted_tokens);
   } catch (err) {
     console.error("Failed to decrypt GitHub token:", err);
-    return undefined;
-  }
-}
-
-async function resolveGoogleAccessToken(
-  db: ReturnType<typeof createServerClient>,
-  userId: string
-): Promise<string | undefined> {
-  const { data: integration } = await db
-    .from("user_integrations")
-    .select("encrypted_tokens")
-    .eq("user_id", userId)
-    .eq("provider", "google")
-    .eq("status", "active")
-    .single();
-
-  if (!integration?.encrypted_tokens) return undefined;
-  try {
-    const decrypted = decrypt(integration.encrypted_tokens);
-    const parsed = JSON.parse(decrypted) as { access_token?: string };
-    return parsed.access_token;
-  } catch (err) {
-    console.error("Failed to decrypt Google token:", err);
     return undefined;
   }
 }
