@@ -10,7 +10,13 @@ const allowedDevOrigins = ["*.ngrok-free.app", ...extraAllowedDevOrigins];
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@agents/agent", "@agents/db", "@agents/types"],
-  serverExternalPackages: ["@langchain/core", "@langchain/langgraph", "@langchain/openai"],
+  serverExternalPackages: [
+    "@langchain/core",
+    "@langchain/langgraph",
+    "@langchain/openai",
+    "@langfuse/otel",
+    "@opentelemetry/sdk-node",
+  ],
   allowedDevOrigins,
 };
 

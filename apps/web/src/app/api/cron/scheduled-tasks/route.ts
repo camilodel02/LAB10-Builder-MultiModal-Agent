@@ -279,6 +279,10 @@ async function executeTask(
       message: task.prompt,
       bypassConfirmation: true,
       longTermMemories,
+      langfuseTrace: {
+        tags: ["feature:cron", "scheduled-task"],
+        traceMetadata: { scheduled_task_id: task.id },
+      },
     });
 
     const nextRunAt = computeNextRunAt(task);

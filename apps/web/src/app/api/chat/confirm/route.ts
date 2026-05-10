@@ -82,6 +82,10 @@ export async function POST(request: Request) {
       userId: user.id,
       sessionId: toolCall.session_id,
       systemPrompt: (profile?.agent_system_prompt as string) ?? "Eres un asistente útil.",
+      langfuseTrace: {
+        tags: ["feature:web-chat", "hitl:tool-confirm"],
+        traceMetadata: { channel: "web" },
+      },
       db,
       enabledTools: (toolSettings ?? []).map((t: Record<string, unknown>) => ({
         id: t.id as string,

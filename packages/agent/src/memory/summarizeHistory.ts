@@ -1,5 +1,6 @@
 import { HumanMessage } from "@langchain/core/messages";
 import type { BaseMessage } from "@langchain/core/messages";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import type { CompactionStats } from "./types";
 import { redactSensitiveContent } from "./safety";
 
@@ -16,11 +17,15 @@ function serializeMessages(messages: BaseMessage[]): string {
 
 export async function summarizeHistory(params: {
   model: {
-    invoke: (messages: HumanMessage[]) => Promise<{ content: unknown }>;
+    invoke: (
+      messages: HumanMessage[],
+      options?: RunnableConfig
+    ) => Promise<{ content: unknown }>;
   };
   currentSummary: string;
   historyChunk: BaseMessage[];
   stats: CompactionStats;
+  invokeConfig?: RunnableConfig;
 }): Promise<{ summary: string; stats: CompactionStats }> {
   if (params.historyChunk.length === 0) {
     return { summary: params.currentSummary, stats: params.stats };
@@ -46,7 +51,10 @@ export async function summarizeHistory(params: {
     "Devuelve un resumen breve y estructurado en español (max 350 palabras).",
   ].join("\n");
 
-  const response = await params.model.invoke([new HumanMessage(prompt)]);
+  const response = await params.model.invoke(
+    [new HumanMessage(prompt)],
+    params.invokeConfig
+  );
   const summary =
     typeof response.content === "string"
       ? response.content

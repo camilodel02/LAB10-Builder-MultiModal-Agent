@@ -161,6 +161,10 @@ export async function POST(request: Request) {
         const result = await runAgent({
           ...ctx,
           resumeDecision: action as "approve" | "reject",
+          langfuseTrace: {
+            tags: ["feature:telegram", "hitl:tool-confirm"],
+            traceMetadata: { channel: "telegram" },
+          },
         });
 
         if (result.pendingConfirmation) {
@@ -419,7 +423,15 @@ export async function POST(request: Request) {
     } catch (err) {
       console.error("Telegram memory retrieval error:", err);
     }
-    const result = await runAgent({ ...ctx, message: text, longTermMemories });
+    const result = await runAgent({
+      ...ctx,
+      message: text,
+      longTermMemories,
+      langfuseTrace: {
+        tags: ["feature:telegram"],
+        traceMetadata: { channel: "telegram" },
+      },
+    });
 
     if (result.pendingConfirmation) {
       // Send the agent's conversational reply first if different from the confirmation prompt

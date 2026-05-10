@@ -4,6 +4,7 @@ import {
   interrupt,
   Command,
   INTERRUPT,
+  type LangGraphRunnableConfig,
 } from "@langchain/langgraph";
 import {
   HumanMessage,
@@ -34,6 +35,11 @@ import { shouldRunLlmCompaction } from "./memory/budget";
 import { summarizeHistory } from "./memory/summarizeHistory";
 import type { CompactionStats } from "./memory/types";
 import { prepareMessagesForModel } from "./memory/repairToolCalls";
+import {
+  createLangfuseCallbackHandler,
+  flushLangfuseTracingIfEnabled,
+  type LangfuseTraceOptions,
+} from "./langfuseCallback";
 
 const GraphState = Annotation.Root({
   messages: Annotation<BaseMessage[]>({
@@ -71,6 +77,8 @@ export interface AgentInput {
   longTermMemories?: string[];
   /** Skip HITL interrupts and auto-approve all tool calls. Use only for unattended runs (e.g. cron). */
   bypassConfirmation?: boolean;
+  /** Langfuse session segmentation (tags, metadata, release). */
+  langfuseTrace?: LangfuseTraceOptions;
 }
 
 export interface AgentOutput {
@@ -133,7 +141,7 @@ const MAX_TOOL_ITERATIONS = 6;
 const HARD_THRESHOLD_CHARS = 20_000;
 const RECENT_WINDOW = 16;
 
-export async function runAgent(input: AgentInput): Promise<AgentOutput> {
+async function runAgentBody(input: AgentInput): Promise<AgentOutput> {
   const {
     message,
     resumeDecision,
@@ -147,7 +155,25 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     googleAccessToken,
     longTermMemories = [],
     bypassConfirmation = false,
+    langfuseTrace,
   } = input;
+
+  const release =
+    langfuseTrace?.release?.trim() ||
+    process.env.LANGFUSE_RELEASE?.trim() ||
+    undefined;
+
+  const langfuseHandler = createLangfuseCallbackHandler({
+    sessionId,
+    userId,
+    tags: langfuseTrace?.tags,
+    release,
+    traceMetadata: {
+      ...(langfuseTrace?.traceMetadata ?? {}),
+      ...(resumeDecision != null ? { hitl_resume: resumeDecision } : {}),
+      ...(bypassConfirmation ? { bypass_confirmation: true } : {}),
+    },
+  });
 
   const model = createChatModel();
   const toolCtx: ToolContext = {
@@ -166,7 +192,8 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
   const toolCallNames: string[] = [];
 
   async function agentNode(
-    state: typeof GraphState.State
+    state: typeof GraphState.State,
+    lcConfig: LangGraphRunnableConfig
   ): Promise<Partial<typeof GraphState.State>> {
     const micro = microCompactMessages(state.messages);
     const nextStats: CompactionStats = {
@@ -189,6 +216,7 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
         currentSummary: runningSummary,
         historyChunk,
         stats: nextStats,
+        invokeConfig: lcConfig,
       });
       runningSummary = summarized.summary;
       summarizedUntil = canSummarizeChunk;
@@ -222,10 +250,10 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     const systemPromptWithDate = `${state.systemPrompt}\n\nFecha y hora actual: ${currentDate} (hora Colombia).${summarySection}${longTermSection}`;
 
     // Inject SystemMessage fresh so it is never accumulated in state.messages.
-    const response = await modelWithTools.invoke([
-      new SystemMessage(systemPromptWithDate),
-      ...recentMessages,
-    ]);
+    const response = await modelWithTools.invoke(
+      [new SystemMessage(systemPromptWithDate), ...recentMessages],
+      lcConfig
+    );
     return {
       messages: [response],
       runningSummary,
@@ -234,7 +262,8 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
   }
 
   async function toolExecutorNode(
-    state: typeof GraphState.State
+    state: typeof GraphState.State,
+    lcConfig: LangGraphRunnableConfig
   ): Promise<Partial<typeof GraphState.State>> {
     const lastMsg = state.messages[state.messages.length - 1];
     if (!(lastMsg instanceof AIMessage) || !lastMsg.tool_calls?.length) {
@@ -324,7 +353,10 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
       }
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const rawResult = await (matchingTool as any).invoke(tc.args);
+        const rawResult = await (matchingTool as any).invoke(
+          tc.args,
+          lcConfig
+        );
         results.push(
           new ToolMessage({ content: String(rawResult), tool_call_id: tc.id! })
         );
@@ -341,7 +373,10 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     return { messages: results };
   }
 
-  function shouldContinue(state: typeof GraphState.State): string {
+  function shouldContinue(
+    state: typeof GraphState.State,
+    _lcConfig: LangGraphRunnableConfig
+  ): string {
     const lastMsg = state.messages[state.messages.length - 1];
     if (lastMsg instanceof AIMessage && lastMsg.tool_calls?.length) {
       const iterations = state.messages.filter(
@@ -366,7 +401,10 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
   const checkpointer = await getCheckpointer();
   const app = graph.compile({ checkpointer });
 
-  const config = { configurable: { thread_id: sessionId } };
+  const runnableConfig: LangGraphRunnableConfig = {
+    configurable: { thread_id: sessionId },
+    ...(langfuseHandler ? { callbacks: [langfuseHandler] } : {}),
+  };
 
   let finalState: typeof GraphState.State & { [INTERRUPT]?: unknown[] };
 
@@ -374,7 +412,7 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     // Resume interrupted graph with human decision
     finalState = await app.invoke(
       new Command({ resume: resumeDecision }),
-      config
+      runnableConfig
     );
   } else {
     // New message — persist to DB (audit log) then append to checkpointer state.
@@ -391,7 +429,7 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
         userId,
         systemPrompt,
       },
-      config
+      runnableConfig
     );
   }
 
@@ -443,4 +481,12 @@ export async function runAgent(input: AgentInput): Promise<AgentOutput> {
     response: responseText,
     toolCalls: toolCallNames,
   };
+}
+
+export async function runAgent(input: AgentInput): Promise<AgentOutput> {
+  try {
+    return await runAgentBody(input);
+  } finally {
+    await flushLangfuseTracingIfEnabled();
+  }
 }
